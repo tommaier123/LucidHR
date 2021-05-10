@@ -1,4 +1,5 @@
 ﻿using System;
+using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
@@ -15,9 +16,15 @@ namespace LucidHR
         public static BluetoothLEDevice bleDevice;
         public static GattCharacteristic characteristic;
 
+        public static string filename;
+
         static async Task Main()
         {
             AppDomain.CurrentDomain.ProcessExit += new EventHandler(CurrentDomain_ProcessExit);
+
+            filename = DateTime.Now.ToString("yyyy_MM_dd-h_mm");
+
+            Console.WriteLine("Starting file " + filename);
 
             int count = 0;
 
@@ -71,45 +78,53 @@ namespace LucidHR
 
         private static void ValueChanged(GattCharacteristic sender, GattValueChangedEventArgs args)
         {
-            var reader = DataReader.FromBuffer(args.CharacteristicValue);
-
-            byte flags = reader.ReadByte();
-
-            int heartRate = -1;
-
-            if ((flags & (1 << 0)) != 0)//16bit HR
+            try
             {
-                byte a = reader.ReadByte();
-                byte b = reader.ReadByte();
-                heartRate = b << 8 | a;
-            }
-            else//8bit HR
-            {
-                heartRate = reader.ReadByte();
-            }
+                var reader = DataReader.FromBuffer(args.CharacteristicValue);
 
-            Console.WriteLine("Heart Rate: " + heartRate);
+                byte flags = reader.ReadByte();
 
-            if ((flags & (1 << 3)) != 0)//Energy Expended present (16bit)
-            {
-                byte a = reader.ReadByte();
-                byte b = reader.ReadByte();
-                int energyExpended = b << 8 | a;
+                int heartRate = -1;
 
-                Console.WriteLine(energyExpended);
-            }
-
-            if ((flags & (1 << 4)) != 0)//RRI present (16bit)
-            {
-                while (reader.UnconsumedBufferLength > 1)
+                if ((flags & (1 << 0)) != 0)//16bit HR
                 {
                     byte a = reader.ReadByte();
                     byte b = reader.ReadByte();
-                    int rri = b << 8 | a;
+                    heartRate = b << 8 | a;
+                }
+                else//8bit HR
+                {
+                    heartRate = reader.ReadByte();
+                }
 
-                    Console.WriteLine("RRI: " + rri/1024f);
+                Console.WriteLine("Heart Rate: " + heartRate);
+
+                if ((flags & (1 << 3)) != 0)//Energy Expended present (16bit)
+                {
+                    byte a = reader.ReadByte();
+                    byte b = reader.ReadByte();
+                    int energyExpended = b << 8 | a;
+
+                    Console.WriteLine(energyExpended);
+                }
+
+                if ((flags & (1 << 4)) != 0)//RRI present (16bit)
+                {
+                    while (reader.UnconsumedBufferLength > 1)
+                    {
+                        byte a = reader.ReadByte();
+                        byte b = reader.ReadByte();
+                        int rri = b << 8 | a;
+
+                        using (StreamWriter w = File.AppendText(filename + ".csv"))
+                        {
+                            w.WriteLine("\"" + DateTime.Now.ToString("T") + "\"" + ";" + DateTimeOffset.Now.ToUnixTimeSeconds() + ";" + heartRate + ";" + rri / 1024f);
+                        }
+                        Console.WriteLine("RRI: " + rri / 1024f);
+                    }
                 }
             }
+            catch { }
         }
 
         private static void ConnectionStatusChanged(BluetoothLEDevice sender, object args)
