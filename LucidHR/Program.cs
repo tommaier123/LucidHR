@@ -72,7 +72,7 @@ namespace LucidHR
                 Console.WriteLine("No suitable device found");
                 Console.WriteLine();
                 Console.WriteLine("Press any key to exit...");
-                Console.Read();
+                Console.ReadKey();
             }
         }
 
