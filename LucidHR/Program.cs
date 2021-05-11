@@ -13,20 +13,128 @@ namespace LucidHR
 {
     class Program
     {
+        private const float timescale = 1000;
+        private const bool testing = true;
+        private const bool record = true;
+        private const float staleDataTime = 20;
+        private const float stalenessCatchupFactor = 0.1f;
 
-        public static BluetoothLEDevice bleDevice;
-        public static GattCharacteristic characteristic;
+        private const int hrMin = 40;
+        private const int hrMax = 100;
+        private const float rriMin = 60f / hrMax;
+        private const float rriMax = 60f / hrMin;
 
-        public static string filename;
+        private static string filename;
 
-        static async Task Main()
+        static async Task Main(string[] args)
         {
-            AppDomain.CurrentDomain.ProcessExit += new EventHandler(CurrentDomain_ProcessExit);
+            if (testing)
+            {
+                args = new string[] { @"C:\Workspace\LucidHR\2021_05_11-1_01.csv" };
+            }
 
-            filename = DateTime.Now.ToString("yyyy_MM_dd-h_mm");
+            if (args.Count() > 0)
+            {
+                if (File.Exists(args[0]))
+                {
+                    filename = Path.GetFileName(args[0]);
 
-            Console.WriteLine("Starting file " + filename);
+                    if (File.Exists(filename + "_filtered.csv")) File.Delete(filename + "_filtered.csv");
 
+                    string text = File.ReadAllText(args[0]);
+
+                    string[] rows = text.Split(Environment.NewLine);
+                    string[][] table = rows.Select(x => x.Split(",")).ToArray();
+
+                    long lastTimestamp = -1;
+
+                    for (int i = 0; i < table.GetLength(0); i++)
+                    {
+                        if (table[i].Length == 4)
+                        {
+                            long currentTimestamp = Int64.Parse(table[i][1]);
+                            if (lastTimestamp != -1) await Task.Delay((int)((currentTimestamp - lastTimestamp) * (1000 / timescale)));
+                            lastTimestamp = currentTimestamp;
+
+                            Console.WriteLine(table[i][0] + " " + table[i][2] + " " + table[i][3]);
+                            Evaluate(currentTimestamp, Int32.Parse(table[i][2]), float.Parse(table[i][3]));
+                            Console.WriteLine();
+                        }
+                    }
+                }
+            }
+            else
+            {
+                AppDomain.CurrentDomain.ProcessExit += new EventHandler(CurrentDomain_ProcessExit);
+
+                filename = DateTime.Now.ToString("yyyy_MM_dd-h_mm");
+
+                Console.WriteLine("Starting file " + filename);
+
+                if (await Connect())
+                {
+                    while (true)
+                    {
+                        await Task.Delay(1000);
+                    }
+                }
+                else
+                {
+                    Console.WriteLine("No suitable device found");
+                    Console.WriteLine();
+                    Console.WriteLine("Press any key to exit...");
+                    Console.ReadKey();
+                }
+            }
+        }
+
+        private static long lastInitialTimestamp = 0;
+        private static float rriAccumulator = 0;
+
+        private static string Evaluate(long timestamp, int hr, float rri)
+        {
+            string ret = "";
+
+            if (hr >= hrMin && hr <= hrMax && rri >= rriMin && rri <= rriMax)
+            {
+                rriAccumulator += rri;
+                float error = timestamp - lastInitialTimestamp - rriAccumulator;
+                Console.WriteLine("Error: " + error);
+                if (Math.Abs(error) > staleDataTime)
+                {
+                    rriAccumulator = 0;
+                    lastInitialTimestamp = timestamp;
+                    Console.WriteLine("Stale Data Detected at " + timestamp);
+                }
+                else
+                {
+                    rriAccumulator += error * stalenessCatchupFactor;
+                }
+
+                if (testing)
+                {
+                    using (StreamWriter w = File.AppendText(filename + "_filtered.csv"))
+                    {
+                        w.WriteLine(timestamp + "," + hr + "," + rri);
+                    }
+                }
+            }
+            else
+            {
+                using (StreamWriter w = File.AppendText(filename + "_filtered.csv"))
+                {
+                    w.WriteLine(timestamp + "," + 120 + "," + 0.5f);
+                }
+            }
+            return ret;
+        }
+
+
+        private static BluetoothLEDevice bleDevice;
+        private static GattCharacteristic characteristic;
+
+        private static async Task<bool> Connect()
+        {
             int count = 0;
 
             foreach (var device in await DeviceInformation.FindAllAsync())
@@ -42,7 +150,7 @@ namespace LucidHR
 
                         if (service != null && characteristic != null)
                         {
-                            Console.WriteLine("Found Device");
+                            Console.WriteLine("Found Paired Heart Rate Device");
 
                             GattCommunicationStatus status = await characteristic.WriteClientCharacteristicConfigurationDescriptorAsync(GattClientCharacteristicConfigurationDescriptorValue.Notify);
                             if (status == GattCommunicationStatus.Success)
@@ -61,20 +169,7 @@ namespace LucidHR
                     //Console.WriteLine(e.Message);
                 }
             }
-            if (count > 0)
-            {
-                while (true)
-                {
-                    await Task.Delay(1000);
-                }
-            }
-            else
-            {
-                Console.WriteLine("No suitable device found");
-                Console.WriteLine();
-                Console.WriteLine("Press any key to exit...");
-                Console.ReadKey();
-            }
+            return count > 0;
         }
 
         private static void ValueChanged(GattCharacteristic sender, GattValueChangedEventArgs args)
@@ -117,11 +212,18 @@ namespace LucidHR
                         byte b = reader.ReadByte();
                         int rri = b << 8 | a;
 
-                        using (StreamWriter w = File.AppendText(filename + ".csv"))
-                        {
-                            w.WriteLine("\"" + DateTime.Now.ToString("T") + "\"" + "," + DateTimeOffset.Now.ToUnixTimeSeconds() + "," + heartRate + "," + (rri / 1024f).ToString(CultureInfo.InvariantCulture));
-                        }
+                        long timestamp = DateTimeOffset.Now.ToUnixTimeSeconds();
+
                         Console.WriteLine("RRI: " + rri / 1024f);
+                        string res = Evaluate(timestamp, heartRate, (rri / 1024f));
+
+                        if (record)
+                        {
+                            using (StreamWriter w = File.AppendText(filename + ".csv"))
+                            {
+                                w.WriteLine("\"" + DateTime.Now.ToString("T") + "\"" + "," + timestamp + "," + heartRate + "," + (rri / 1024f).ToString(CultureInfo.InvariantCulture) + res);
+                            }
+                        }
                     }
                 }
             }
