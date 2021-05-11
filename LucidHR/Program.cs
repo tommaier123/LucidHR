@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -118,7 +119,7 @@ namespace LucidHR
 
                         using (StreamWriter w = File.AppendText(filename + ".csv"))
                         {
-                            w.WriteLine("\"" + DateTime.Now.ToString("T") + "\"" + ";" + DateTimeOffset.Now.ToUnixTimeSeconds() + ";" + heartRate + ";" + rri / 1024f);
+                            w.WriteLine("\"" + DateTime.Now.ToString("T") + "\"" + "," + DateTimeOffset.Now.ToUnixTimeSeconds() + "," + heartRate + "," + (rri / 1024f).ToString(CultureInfo.InvariantCulture));
                         }
                         Console.WriteLine("RRI: " + rri / 1024f);
                     }
